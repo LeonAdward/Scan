@@ -1,0 +1,46 @@
+name: V19 one-click camera repair
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Download Apktool
+        shell: bash
+        run: |
+          set -euo pipefail
+          url=$(curl -fsSL --retry 3 https://api.github.com/repos/iBotPeaches/Apktool/releases/latest | python3 -c 'import json,sys; a=json.load(sys.stdin)["assets"]; print(next(x["browser_download_url"] for x in a if x["name"].endswith(".jar") and "apktool" in x["name"].lower()))')
+          curl -fL --retry 3 "$url" -o "$RUNNER_TEMP/apktool.jar"
+      - name: Decode existing base APK
+        run: java -jar "$RUNNER_TEMP/apktool.jar" d -f base.apk -o work
+      - name: Preserve V17 JavaScript repair
+        run: python3 v19_enable_js.py work
+      - name: Add camera permissions and scanner resources
+        run: python3 v19_camera_patch.py work
+      - name: Check JavaScript
+        run: |
+          node --check assets/scanner.js
+          node --check assets/ocr.js
+      - name: Repack without Gradle
+        run: java -jar "$RUNNER_TEMP/apktool.jar" b work -o V19-camera-unsigned.apk
+      - name: Verify APK contents
+        run: |
+          unzip -t V19-camera-unsigned.apk | tail -1
+          python3 - <<'PY2'
+          import zipfile
+          with zipfile.ZipFile('V19-camera-unsigned.apk') as z:
+              for n in ('AndroidManifest.xml','classes.dex','assets/index.html','assets/scanner.js','assets/ocr.js','assets/ocr/tesseract.min.js','assets/ocr/lang/eng.traineddata.gz'):
+                  assert n in z.namelist(),n
+          PY2
+      - uses: actions/upload-artifact@v4
+        with:
+          name: V19-camera-unsigned-APK
+          path: V19-camera-unsigned.apk
+          if-no-files-found: error
