@@ -1,1 +1,63 @@
-
+name: Build 商品扫描 camera-permission patch
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build.yml'
+      - 'patch.py'
+      - 'base.apk'
+      - 'scanner.js'
+      - 'server-config.js'
+      - 'server-client.js'
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Apktool from official GitHub release
+        shell: bash
+        run: |
+          set -euo pipefail
+          url=$(curl -fsSL --retry 3 https://api.github.com/repos/iBotPeaches/Apktool/releases/latest | python3 -c 'import json,sys; a=json.load(sys.stdin)["assets"]; print(next(x["browser_download_url"] for x in a if x["name"].endswith(".jar") and "apktool" in x["name"].lower()))')
+          curl -fL --retry 3 "$url" -o "$RUNNER_TEMP/apktool.jar"
+          java -jar "$RUNNER_TEMP/apktool.jar" --version
+      - name: Decode original APK (all dex, manifest and assets)
+        run: java -jar "$RUNNER_TEMP/apktool.jar" d -f base.apk -o work
+      - name: Patch MainActivity, WebChromeClient and manifest
+        run: python3 patch.py work scanner.js
+      - name: Rebuild APK
+        run: java -jar "$RUNNER_TEMP/apktool.jar" b work -o scanner-unsigned-unaligned.apk
+      - name: Verify DEX and package content
+        shell: bash
+        run: |
+          set -euo pipefail
+          unzip -t scanner-unsigned-unaligned.apk | tail -1
+          unzip -p scanner-unsigned-unaligned.apk classes3.dex | strings | grep -q 'grantCameraRequest'
+          unzip -p scanner-unsigned-unaligned.apk classes3.dex | strings | grep -q 'onPermissionRequest'
+          mkdir -p out
+          cp scanner-unsigned-unaligned.apk out/商品扫描_unsigned.apk
+          unzip -p scanner-unsigned-unaligned.apk classes3.dex > out/classes3.dex
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('scanner-unsigned-unaligned.apk') as z:
+              for p in ['classes3.dex','AndroidManifest.xml','assets/scanner.js','assets/server-config.js','assets/server-client.js']:
+                  with open('out/'+p.replace('/','_'),'wb') as f: f.write(z.read(p))
+          with zipfile.ZipFile('out/商品扫描_修改文件.zip','w',zipfile.ZIP_DEFLATED) as z:
+              for p in ['classes3.dex','AndroidManifest.xml','assets_scanner.js','assets_server-config.js','assets_server-client.js']:
+                  z.write('out/'+p,'assets/scanner.js','assets/server-config.js','assets/server-client.js' if p=='assets_scanner.js' else p)
+          PY
+      - name: Upload unsigned APK and changed files
+        uses: actions/upload-artifact@v4
+        with:
+          name: 商品扫描-camera-permission-build
+          path: |
+            out/商品扫描_unsigned.apk
+            out/商品扫描_修改文件.zip
+            out/classes3.dex
+          if-no-files-found: error
