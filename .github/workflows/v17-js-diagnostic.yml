@@ -1,0 +1,38 @@
+name: V17 JavaScript diagnostic
+on:
+  workflow_dispatch:
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Download apktool
+        shell: bash
+        run: |
+          set -euo pipefail
+          url=$(curl -fsSL --retry 3 https://api.github.com/repos/iBotPeaches/Apktool/releases/latest | python3 -c 'import json,sys; a=json.load(sys.stdin)["assets"]; print(next(x["browser_download_url"] for x in a if x["name"].endswith(".jar") and "apktool" in x["name"].lower()))')
+          curl -fL --retry 3 "$url" -o "$RUNNER_TEMP/apktool.jar"
+      - name: Decode original APK
+        run: java -jar "$RUNNER_TEMP/apktool.jar" d -f base.apk -o work
+      - name: Enable JS and replace diagnostic page
+        run: |
+          set -euo pipefail
+          python3 v17_enable_js.py work
+          cp v17-js-test.html work/assets/index.html
+          python3 -c 'import pathlib; assert "JavaScript 尚未执行" in pathlib.Path("work/assets/index.html").read_text()'
+      - name: Repackage without full Android project build
+        run: java -jar "$RUNNER_TEMP/apktool.jar" b work -o v17-unsigned.apk
+      - name: Check and upload
+        run: |
+          unzip -t v17-unsigned.apk | tail -1
+          mkdir -p out
+          cp v17-unsigned.apk out/商品扫描_V17_JS诊断_unsigned.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: V17-JS-diagnostic-unsigned
+          path: out/*.apk
+          if-no-files-found: error
