@@ -1,14 +1,16 @@
-name: Build 商品扫描 camera-permission patch
+name: Build 商品扫描 offline OCR HTTPS WebView
 on:
   workflow_dispatch:
   push:
     paths:
       - '.github/workflows/build.yml'
       - 'patch.py'
+      - 'asset_loader_patch.py'
       - 'base.apk'
       - 'scanner.js'
       - 'server-config.js'
       - 'server-client.js'
+      - 'assets/**'
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -20,52 +22,55 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Install Apktool from official GitHub release
+      - name: Install Apktool
         shell: bash
         run: |
           set -euo pipefail
           url=$(curl -fsSL --retry 3 https://api.github.com/repos/iBotPeaches/Apktool/releases/latest | python3 -c 'import json,sys; a=json.load(sys.stdin)["assets"]; print(next(x["browser_download_url"] for x in a if x["name"].endswith(".jar") and "apktool" in x["name"].lower()))')
           curl -fL --retry 3 "$url" -o "$RUNNER_TEMP/apktool.jar"
           java -jar "$RUNNER_TEMP/apktool.jar" --version
-      - name: Decode original APK (all dex, manifest and assets)
+      - name: Decode original APK
         run: java -jar "$RUNNER_TEMP/apktool.jar" d -f base.apk -o work
-      - name: Patch MainActivity, WebChromeClient and manifest
+      - name: Apply existing camera permission patch
         run: python3 patch.py work scanner.js
+      - name: Install offline OCR and HTTPS asset bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a assets/. work/assets/
+          python3 asset_loader_patch.py work
+          test -s work/assets/ocr/worker.min.js
+          test -s work/assets/ocr/core/tesseract-core-relaxedsimd-lstm.wasm.js
+          test -s work/assets/ocr/lang/eng.traineddata.gz
       - name: Rebuild APK
         run: java -jar "$RUNNER_TEMP/apktool.jar" b work -o scanner-unsigned-unaligned.apk
-      - name: Verify DEX and package content
+      - name: Verify and package
         shell: bash
         run: |
           set -euo pipefail
           unzip -t scanner-unsigned-unaligned.apk | tail -1
-          unzip -p scanner-unsigned-unaligned.apk classes3.dex | strings | grep -q 'grantCameraRequest'
-          unzip -p scanner-unsigned-unaligned.apk classes3.dex | strings | grep -q 'onPermissionRequest'
+          unzip -l scanner-unsigned-unaligned.apk | grep -q 'assets/ocr/worker.min.js'
+          unzip -l scanner-unsigned-unaligned.apk | grep -q 'assets/ocr/lang/eng.traineddata.gz'
           mkdir -p out
-          cp scanner-unsigned-unaligned.apk out/商品扫描_unsigned.apk
-          unzip -p scanner-unsigned-unaligned.apk classes3.dex > out/classes3.dex
-          python3 - <<'PY'
-          import subprocess, zipfile
+          cp scanner-unsigned-unaligned.apk out/商品扫描_离线OCR_unsigned.apk
+          python3 - <<'PYCODE'
           from pathlib import Path
-          apk = 'scanner-unsigned-unaligned.apk'
-          output = Path('out')
-          paths = ['classes3.dex', 'AndroidManifest.xml', 'assets/scanner.js',
-                   'assets/server-config.js', 'assets/server-client.js']
-          with zipfile.ZipFile(output / '商品扫描_修改文件.zip', 'w', zipfile.ZIP_DEFLATED) as patch:
-              for path in paths:
-                  data = subprocess.check_output(['unzip', '-p', apk, path])
-                  if not data:
-                      raise RuntimeError(f'Empty APK entry: {path}')
-                  patch.writestr(path, data)
-          with zipfile.ZipFile(output / '商品扫描_修改文件.zip') as patch:
-              assert patch.testzip() is None
-              assert set(patch.namelist()) == set(paths)
-          PY
-      - name: Upload unsigned APK and changed files
+          import zipfile
+          apk=Path('scanner-unsigned-unaligned.apk')
+          with zipfile.ZipFile(apk) as z:
+              entries=[n for n in z.namelist() if n.startswith('assets/') and (n in ('assets/index.html','assets/scanner.js','assets/ocr.js') or n.startswith('assets/ocr/'))]
+              dex=[n for n in z.namelist() if n.endswith('.dex')]
+              assert entries and dex
+              assert any(b'appassets.androidplatform.net' in z.read(n) for n in dex)
+              with zipfile.ZipFile('out/商品扫描_离线OCR_修改文件.zip','w',zipfile.ZIP_DEFLATED) as p:
+                  for n in entries+dex+['AndroidManifest.xml']:
+                      p.writestr(n,z.read(n))
+          with zipfile.ZipFile('out/商品扫描_离线OCR_修改文件.zip') as p:
+              assert p.testzip() is None
+          PYCODE
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: 商品扫描-camera-permission-build
-          path: |
-            out/商品扫描_unsigned.apk
-            out/商品扫描_修改文件.zip
-            out/classes3.dex
+          name: 商品扫描-V13-offline-ocr
+          path: out/*
           if-no-files-found: error
