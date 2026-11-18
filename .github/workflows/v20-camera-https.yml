@@ -1,0 +1,55 @@
+name: V20 camera HTTPS repair
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify existing repository inputs
+        run: |
+          set -e
+          for f in base.apk v19_enable_js.py v19_camera_patch.py asset_loader_patch.py assets/index.html assets/scanner.js assets/ocr.js assets/ocr/lang/eng.traineddata.gz; do
+            test -f "$f" || { echo "Missing: $f"; exit 1; }
+          done
+      - name: Download apktool
+        run: |
+          set -euo pipefail
+          url=$(curl -fsSL --retry 3 https://api.github.com/repos/iBotPeaches/Apktool/releases/latest | python3 -c 'import json,sys; print(next(a["browser_download_url"] for a in json.load(sys.stdin)["assets"] if a["name"].endswith(".jar") and "apktool" in a["name"].lower()))')
+          curl -fL --retry 3 "$url" -o "$RUNNER_TEMP/apktool.jar"
+      - name: Decode base APK
+        run: java -jar "$RUNNER_TEMP/apktool.jar" d -f base.apk -o work
+      - name: Apply known JS and camera patches
+        run: |
+          python3 v19_enable_js.py work
+          python3 v19_camera_patch.py work
+      - name: Map local assets to HTTPS origin
+        run: python3 asset_loader_patch.py work
+      - name: Verify patched entry and assets
+        run: |
+          set -e
+          grep -R -q 'https://appassets.androidplatform.net/assets/index.html' work/smali* || exit 1
+          test -f work/assets/index.html
+          test -f work/assets/ocr/lang/eng.traineddata.gz
+          node --check work/assets/scanner.js
+          node --check work/assets/ocr.js
+      - name: Package APK without Gradle
+        run: java -jar "$RUNNER_TEMP/apktool.jar" b work -o V20-camera-https-unsigned.apk
+      - name: Verify APK integrity
+        run: |
+          unzip -t V20-camera-https-unsigned.apk | tail -1
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('V20-camera-https-unsigned.apk') as z:
+              for p in ('AndroidManifest.xml','classes.dex','assets/index.html','assets/scanner.js','assets/ocr.js','assets/ocr/lang/eng.traineddata.gz'):
+                  assert p in z.namelist(),p
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: V20-camera-https-unsigned-APK
+          path: V20-camera-https-unsigned.apk
+          if-no-files-found: error
