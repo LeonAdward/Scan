@@ -1,0 +1,41 @@
+name: V16 native startup isolation
+on:
+  workflow_dispatch:
+jobs:
+  isolate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Download apktool
+        shell: bash
+        run: |
+          set -euo pipefail
+          url=$(curl -fsSL --retry 3 https://api.github.com/repos/iBotPeaches/Apktool/releases/latest | python3 -c 'import json,sys; a=json.load(sys.stdin)["assets"]; print(next(x["browser_download_url"] for x in a if x["name"].endswith(".jar") and "apktool" in x["name"].lower()))')
+          curl -fL --retry 3 "$url" -o "$RUNNER_TEMP/apktool.jar"
+      - name: Decode original APK, without any injected native patches
+        run: java -jar "$RUNNER_TEMP/apktool.jar" d -f base.apk -o work
+      - name: Replace only home page with a static diagnostic page
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp v16-startup-test.html work/assets/index.html
+          test -s work/assets/index.html
+          ! grep -R -q 'ScannerAssetClient' work/smali* || (echo 'Unexpected asset bridge in base APK' && exit 1)
+      - name: Build native-isolation APK
+        run: java -jar "$RUNNER_TEMP/apktool.jar" b work -o v16-unsigned.apk
+      - name: Validate and upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          unzip -t v16-unsigned.apk | tail -1
+          mkdir -p out
+          cp v16-unsigned.apk out/商品扫描_V16_原生启动隔离_unsigned.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: V16-native-startup-isolation-unsigned
+          path: out/*.apk
+          if-no-files-found: error
