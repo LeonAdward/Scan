@@ -42,6 +42,11 @@ jobs:
           test -s work/assets/ocr/worker.min.js
           test -s work/assets/ocr/core/tesseract-core-relaxedsimd-lstm.wasm.js
           test -s work/assets/ocr/lang/eng.traineddata.gz
+      - name: Verify scanner JavaScript syntax
+        run: |
+          node --check assets/scanner.js
+          node --check assets/ocr.js
+          python3 -m py_compile patch.py asset_loader_patch.py
       - name: Rebuild APK
         run: java -jar "$RUNNER_TEMP/apktool.jar" b work -o scanner-unsigned-unaligned.apk
       - name: Verify and package
@@ -71,6 +76,6 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: 商品扫描-V13-offline-ocr
+          name: 商品扫描-V14-startup-repair
           path: out/*
           if-no-files-found: error
