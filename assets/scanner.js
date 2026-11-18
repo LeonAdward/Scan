@@ -48,4 +48,4 @@ window.addEventListener('pagehide',()=>{if(stream){stream.getTracks().forEach(t=
 $('start').onclick=startCamera;
 function refreshCount(){const el=$('skuCount');if(el)el.textContent=db.length+' 种商品'}
 refreshCount();
-window.addEventListener('DOMContentLoaded',()=>{setTimeout(startCamera,180);if(screen.orientation&&screen.orientation.lock){screen.orientation.lock('portrait').catch(()=>{})}});
+window.addEventListener('DOMContentLoaded',()=>{status.textContent='界面已加载，准备启动摄像头';setTimeout(startCamera,300);});
