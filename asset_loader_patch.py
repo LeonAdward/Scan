@@ -132,4 +132,22 @@ client.write_text(r'''.class public Lcom/example/gloryofgeneralsremakeeditor/Sca
     return-object v0
 .end method
 ''')
+
+# Expose main-document failures instead of silently leaving an empty WebView.
+client_text=client.read_text()
+client_text += r'''
+.method public onReceivedError(Landroid/webkit/WebView;Landroid/webkit/WebResourceRequest;Landroid/webkit/WebResourceError;)V
+    .locals 2
+    invoke-interface {p2}, Landroid/webkit/WebResourceRequest;->isForMainFrame()Z
+    move-result v0
+    if-eqz v0, :done
+    const-string v0, "<html><meta name=viewport content='width=device-width,initial-scale=1'><body style='background:#091324;color:white;font:16px sans-serif;padding:24px'><h2>商品扫描启动失败</h2><p>WebView 无法加载本地主页面，请检查 APK 构建日志和设备 Logcat。</p></body></html>"
+    const-string v1, "text/html"
+    invoke-virtual {p1, v0, v1}, Landroid/webkit/WebView;->loadData(Ljava/lang/String;Ljava/lang/String;)V
+    :done
+    return-void
+.end method
+'''
+client.write_text(client_text)
+
 print('HTTPS asset mapping installed:',main,client)
